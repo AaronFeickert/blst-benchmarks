@@ -1,4 +1,4 @@
-use blst::{min_pk::*, BLST_ERROR};
+use blst::{min_sig::*, BLST_ERROR};
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use rand::{RngCore, SeedableRng};
@@ -56,7 +56,7 @@ fn bench_pop(c: &mut Criterion) {
 	let seed = [0u8; 32];
 	let mut rng = ChaCha12Rng::from_seed(seed);
 
-	let mut group = c.benchmark_group("bench_pop");
+	let mut group = c.benchmark_group("pop_min_sig");
 	group.bench_function("pop", |b| {
 		// Generate signing data for a common message
 		let msg = gen_msg(&mut rng);
@@ -105,7 +105,7 @@ fn bench_verify(c: &mut Criterion) {
 	let seed = [0u8; 32];
 	let mut rng = ChaCha12Rng::from_seed(seed);
 
-	let mut group = c.benchmark_group("bench_pop");
+	let mut group = c.benchmark_group("pop_min_sig");
 	group.bench_function("verify", |b| {
 		// Generate signing data for a common message
 		let msg = gen_msg(&mut rng);

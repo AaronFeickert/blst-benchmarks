@@ -52,7 +52,7 @@ fn bench_distinct(c: &mut Criterion) {
 	let seed = [0u8; 32];
 	let mut rng = ChaCha12Rng::from_seed(seed);
 
-	let mut group = c.benchmark_group("bench_distinct");
+	let mut group = c.benchmark_group("distinct_min_pk");
 	group.bench_function("distinct", |b| {
 		// Generate signing data for a common message
 		let msg = gen_msg(&mut rng);
