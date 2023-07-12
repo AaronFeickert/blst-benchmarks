@@ -86,6 +86,7 @@ fn bench_pop(c: &mut Criterion) {
 				let pop = Signature::uncompress(pop_bytes).unwrap();
 
 				// Verify the proof
+				// Note that the public key is validated here
 				let result = pop.verify(
 					true,
 					pk_bytes,
@@ -130,6 +131,7 @@ fn bench_verify(c: &mut Criterion) {
 
 		b.iter(|| {
 			// Verify the aggregated signature
+			// Because the earlier proof verifications validated the public keys, we don't need to do that here
 			let agg = Signature::uncompress(&public_data.agg).unwrap();
 			let result = agg.fast_aggregate_verify(true, &public_data.msg, DST_SIGN, &pks_ref);
 			assert_eq!(result, BLST_ERROR::BLST_SUCCESS);

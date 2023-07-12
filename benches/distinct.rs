@@ -88,6 +88,7 @@ fn bench_distinct(c: &mut Criterion) {
 			let extended_msgs_ref: Vec<&[u8]> = extended_msgs.iter().map(|m| m.as_slice()).collect();
 
 			// Verify the aggregated signature
+			// We need to validate the public keys here
 			let agg = Signature::uncompress(&public_data.agg).unwrap();
 			let result = agg.aggregate_verify(true, &extended_msgs_ref, DST_SIGN, &pks_ref, true);
 			assert_eq!(result, BLST_ERROR::BLST_SUCCESS);
