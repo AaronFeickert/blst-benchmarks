@@ -1,6 +1,6 @@
 use blst::{min_sig::*, BLST_ERROR};
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha12Rng;
 
@@ -9,10 +9,10 @@ use rand_chacha::ChaCha12Rng;
 // - each signer includes a PoP that must be verified
 // - aggregated verification is as usual
 
-const MSG_LEN: usize = 256;
+const MSG_LEN: usize = 32; // length of common message in bytes
 const DST_SIGN: &[u8] = b"TEST_SIGN";
 const DST_POP: &[u8] = b"TEST_POP";
-const SIGNERS: usize = 32;
+const SIGNERS: &[usize] = &[1, 2, 4, 8, 16, 32, 64, 128, 256]; // number of signers for an aggregate signature
 
 // Data used internally for signing
 struct SigningData {
@@ -56,87 +56,91 @@ fn bench_pop(c: &mut Criterion) {
 	let seed = [0u8; 32];
 	let mut rng = ChaCha12Rng::from_seed(seed);
 
-	let mut group = c.benchmark_group("pop_min_sig");
-	group.bench_function("pop", |b| {
-		// Generate signing data for a common message
-		let msg = gen_msg(&mut rng);
-		let secret_data: Vec<SigningData> = (0..SIGNERS).into_iter().map(
-			|_| gen_data(&msg, DST_SIGN, &mut rng)
-		).collect();
+	let mut group = c.benchmark_group("PoP verify (minimal signature)");
+	for signers in SIGNERS {
+		group.bench_with_input(BenchmarkId::from_parameter(signers), signers, |b, &signers| {
+			// Generate signing data for a common message
+			let msg = gen_msg(&mut rng);
+			let secret_data: Vec<SigningData> = (0..signers).into_iter().map(
+				|_| gen_data(&msg, DST_SIGN, &mut rng)
+			).collect();
 
-		// Aggregate the signatures
-		let sigs = secret_data.iter().map(|d| &d.sig).collect::<Vec<&Signature>>();
-		let aggregate = AggregateSignature::aggregate(&sigs, true).unwrap().to_signature();
+			// Aggregate the signatures
+			let sigs = secret_data.iter().map(|d| &d.sig).collect::<Vec<&Signature>>();
+			let aggregate = AggregateSignature::aggregate(&sigs, true).unwrap().to_signature();
 
-		// Prepare the public data
-		let public_data = PublicData {
-			pks: secret_data.iter().map(|d| d.pk.compress().to_vec()).collect(),
-			pops: secret_data.iter().map(|d| d.pop.compress().to_vec()).collect(),
-			msg,
-			agg: aggregate.compress().to_vec(),
-		};
+			// Prepare the public data
+			let public_data = PublicData {
+				pks: secret_data.iter().map(|d| d.pk.compress().to_vec()).collect(),
+				pops: secret_data.iter().map(|d| d.pop.compress().to_vec()).collect(),
+				msg,
+				agg: aggregate.compress().to_vec(),
+			};
 
-		b.iter(|| {
-			// Decompress the public keys
-			let pks: Vec<PublicKey> = public_data.pks.iter().map(|p| PublicKey::uncompress(p).unwrap()).collect();
+			b.iter(|| {
+				// Decompress the public keys
+				let pks: Vec<PublicKey> = public_data.pks.iter().map(|p| PublicKey::uncompress(p).unwrap()).collect();
 
-			// Verify the proofs of possession
-			for ((pk, pk_bytes), pop_bytes) in pks.clone().into_iter().zip(public_data.pks.iter()).zip(public_data.pops.iter()) {
-				// Decompress the proof
-				let pop = Signature::uncompress(pop_bytes).unwrap();
+				// Verify the proofs of possession
+				for ((pk, pk_bytes), pop_bytes) in pks.clone().into_iter().zip(public_data.pks.iter()).zip(public_data.pops.iter()) {
+					// Decompress the proof
+					let pop = Signature::uncompress(pop_bytes).unwrap();
 
-				// Verify the proof
-				// Note that the public key is validated here
-				let result = pop.verify(
-					true,
-					pk_bytes,
-					DST_POP,
-					&[],
-					&pk,
-					true,
-				);
-				assert_eq!(result, BLST_ERROR::BLST_SUCCESS);
-			}
-		})
-	});
+					// Verify the proof
+					// Note that the public key is validated here
+					let result = pop.verify(
+						true,
+						pk_bytes,
+						DST_POP,
+						&[],
+						&pk,
+						true,
+					);
+					assert_eq!(result, BLST_ERROR::BLST_SUCCESS);
+				}
+			})
+		});
+	}
 }
 
 fn bench_verify(c: &mut Criterion) {
 	let seed = [0u8; 32];
 	let mut rng = ChaCha12Rng::from_seed(seed);
 
-	let mut group = c.benchmark_group("pop_min_sig");
-	group.bench_function("verify", |b| {
-		// Generate signing data for a common message
-		let msg = gen_msg(&mut rng);
-		let secret_data: Vec<SigningData> = (0..SIGNERS).into_iter().map(
-			|_| gen_data(&msg, DST_SIGN, &mut rng)
-		).collect();
+	let mut group = c.benchmark_group("Signature verify (minimal signature)");
+	for signers in SIGNERS {
+		group.bench_with_input(BenchmarkId::from_parameter(signers), signers, |b, &signers| {
+			// Generate signing data for a common message
+			let msg = gen_msg(&mut rng);
+			let secret_data: Vec<SigningData> = (0..signers).into_iter().map(
+				|_| gen_data(&msg, DST_SIGN, &mut rng)
+			).collect();
 
-		// Aggregate the signatures
-		let sigs = secret_data.iter().map(|d| &d.sig).collect::<Vec<&Signature>>();
-		let aggregate = AggregateSignature::aggregate(&sigs, true).unwrap().to_signature();
+			// Aggregate the signatures
+			let sigs = secret_data.iter().map(|d| &d.sig).collect::<Vec<&Signature>>();
+			let aggregate = AggregateSignature::aggregate(&sigs, true).unwrap().to_signature();
 
-		// Prepare the public data
-		let public_data = PublicData {
-			pks: secret_data.iter().map(|d| d.pk.compress().to_vec()).collect(),
-			pops: secret_data.iter().map(|d| d.pop.compress().to_vec()).collect(),
-			msg,
-			agg: aggregate.compress().to_vec(),
-		};
+			// Prepare the public data
+			let public_data = PublicData {
+				pks: secret_data.iter().map(|d| d.pk.compress().to_vec()).collect(),
+				pops: secret_data.iter().map(|d| d.pop.compress().to_vec()).collect(),
+				msg,
+				agg: aggregate.compress().to_vec(),
+			};
 
-		// Decompress the public keys
-		let pks: Vec<PublicKey> = public_data.pks.iter().map(|p| PublicKey::uncompress(p).unwrap()).collect();
-		let pks_ref: Vec<&PublicKey> = pks.iter().collect();
+			// Decompress the public keys
+			let pks: Vec<PublicKey> = public_data.pks.iter().map(|p| PublicKey::uncompress(p).unwrap()).collect();
+			let pks_ref: Vec<&PublicKey> = pks.iter().collect();
 
-		b.iter(|| {
-			// Verify the aggregated signature
-			// Because the earlier proof verifications validated the public keys, we don't need to do that here
-			let agg = Signature::uncompress(&public_data.agg).unwrap();
-			let result = agg.fast_aggregate_verify(true, &public_data.msg, DST_SIGN, &pks_ref);
-			assert_eq!(result, BLST_ERROR::BLST_SUCCESS);
-		})
-	});
+			b.iter(|| {
+				// Verify the aggregated signature
+				// Because the earlier proof verifications validated the public keys, we don't need to do that here
+				let agg = Signature::uncompress(&public_data.agg).unwrap();
+				let result = agg.fast_aggregate_verify(true, &public_data.msg, DST_SIGN, &pks_ref);
+				assert_eq!(result, BLST_ERROR::BLST_SUCCESS);
+			})
+		});
+	}
 }
 
 criterion_group!(benches, bench_pop, bench_verify);

@@ -1,6 +1,6 @@
 use blst::{min_pk::*, BLST_ERROR};
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha12Rng;
 
@@ -8,9 +8,9 @@ use rand_chacha::ChaCha12Rng;
 // - distinct message for each signer
 // - aggregated verification is on all messages
 
-const MSG_LEN: usize = 256;
+const MSG_LEN: usize = 32; // length of common message in bytes
 const DST_SIGN: &[u8] = b"TEST_SIGN";
-const SIGNERS: usize = 32;
+const SIGNERS: &[usize] = &[1, 2, 4, 8, 16, 32, 64, 128, 256]; // number of signers for an aggregate signature
 
 // Data used internally for signing
 struct SigningData {
@@ -52,48 +52,50 @@ fn bench_distinct(c: &mut Criterion) {
 	let seed = [0u8; 32];
 	let mut rng = ChaCha12Rng::from_seed(seed);
 
-	let mut group = c.benchmark_group("distinct_min_pk");
-	group.bench_function("distinct", |b| {
-		// Generate signing data for a common message
-		let msg = gen_msg(&mut rng);
-		let secret_data: Vec<SigningData> = (0..SIGNERS).into_iter().map(
-			|_| gen_data(&msg, DST_SIGN, &mut rng)
-		).collect();
-
-		// Aggregate the signatures
-		let sigs = secret_data.iter().map(|d| &d.sig).collect::<Vec<&Signature>>();
-		let aggregate = AggregateSignature::aggregate(&sigs, true).unwrap().to_signature();
-
-		// Prepare the public data
-		let public_data = PublicData {
-			pks: secret_data.iter().map(|d| d.pk.compress().to_vec()).collect(),
-			msg,
-			agg: aggregate.compress().to_vec(),
-		};
-
-		b.iter(|| {
-			// Decompress the public keys
-			let pks: Vec<PublicKey> = public_data.pks.iter().map(|p| PublicKey::uncompress(p).unwrap()).collect();
-			let pks_ref: Vec<&PublicKey> = pks.iter().collect();
-
-			// Prepare the extended messages
-			let extended_msgs: Vec<Vec<u8>> = public_data.pks.iter().map(
-				|p| {
-					let mut extended_msg = p.clone();
-					extended_msg.extend(public_data.msg.clone());
-
-					extended_msg
-				}
+	let mut group = c.benchmark_group("Distinct verify (minimal key)");
+	for signers in SIGNERS {
+		group.bench_with_input(BenchmarkId::from_parameter(signers), signers, |b, &signers| {
+			// Generate signing data for a common message
+			let msg = gen_msg(&mut rng);
+			let secret_data: Vec<SigningData> = (0..signers).into_iter().map(
+				|_| gen_data(&msg, DST_SIGN, &mut rng)
 			).collect();
-			let extended_msgs_ref: Vec<&[u8]> = extended_msgs.iter().map(|m| m.as_slice()).collect();
 
-			// Verify the aggregated signature
-			// We need to validate the public keys here
-			let agg = Signature::uncompress(&public_data.agg).unwrap();
-			let result = agg.aggregate_verify(true, &extended_msgs_ref, DST_SIGN, &pks_ref, true);
-			assert_eq!(result, BLST_ERROR::BLST_SUCCESS);
-		})
-	});
+			// Aggregate the signatures
+			let sigs = secret_data.iter().map(|d| &d.sig).collect::<Vec<&Signature>>();
+			let aggregate = AggregateSignature::aggregate(&sigs, true).unwrap().to_signature();
+
+			// Prepare the public data
+			let public_data = PublicData {
+				pks: secret_data.iter().map(|d| d.pk.compress().to_vec()).collect(),
+				msg,
+				agg: aggregate.compress().to_vec(),
+			};
+
+			b.iter(|| {
+				// Decompress the public keys
+				let pks: Vec<PublicKey> = public_data.pks.iter().map(|p| PublicKey::uncompress(p).unwrap()).collect();
+				let pks_ref: Vec<&PublicKey> = pks.iter().collect();
+
+				// Prepare the extended messages
+				let extended_msgs: Vec<Vec<u8>> = public_data.pks.iter().map(
+					|p| {
+						let mut extended_msg = p.clone();
+						extended_msg.extend(public_data.msg.clone());
+
+						extended_msg
+					}
+				).collect();
+				let extended_msgs_ref: Vec<&[u8]> = extended_msgs.iter().map(|m| m.as_slice()).collect();
+
+				// Verify the aggregated signature
+				// We need to validate the public keys here
+				let agg = Signature::uncompress(&public_data.agg).unwrap();
+				let result = agg.aggregate_verify(true, &extended_msgs_ref, DST_SIGN, &pks_ref, true);
+				assert_eq!(result, BLST_ERROR::BLST_SUCCESS);
+			})
+		});
+	}
 }
 
 criterion_group!(benches, bench_distinct);
