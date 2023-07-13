@@ -1,4 +1,6 @@
-use blst::{min_sig::*, BLST_ERROR};
+use blst::{min_sig::*, BLST_ERROR, blst_scalar, blst_scalar_from_uint32};
+
+use std::mem::MaybeUninit;
 
 use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
 use rand::{RngCore, SeedableRng};
@@ -12,7 +14,7 @@ use rand_chacha::ChaCha12Rng;
 const MSG_LEN: usize = 32; // length of common message in bytes
 const DST_SIGN: &[u8] = b"TEST_SIGN";
 const DST_POP: &[u8] = b"TEST_POP";
-const SIGNERS: &[usize] = &[1, 2, 4, 8, 16, 32, 64, 128, 256]; // number of signers for an aggregate signature
+const SIGNERS: &[usize] = &[1, 2, 32, 64]; // number of signers for an aggregate signature
 
 // Data used internally for signing
 struct SigningData {
@@ -43,7 +45,7 @@ fn gen_data(msg: &Vec<u8>, dst: &[u8], rng: &mut ChaCha12Rng) -> SigningData {
 	let sk = SecretKey::key_gen(&ikm, &[]).unwrap();
 	let pk = sk.sk_to_pk();
 	let sig = sk.sign(&msg, dst, &[]);
-	let pop = sk.sign(&pk.compress(), DST_POP, &[]);
+	let pop = sk.sign(&[], DST_POP, &[]);
 
 	SigningData {
 		pk,
@@ -78,19 +80,17 @@ fn bench_pop(c: &mut Criterion) {
 			};
 
 			b.iter(|| {
-				// Decompress the public keys
+				// Decompress the public keys and proofs
 				let pks: Vec<PublicKey> = public_data.pks.iter().map(|p| PublicKey::uncompress(p).unwrap()).collect();
+				let pops: Vec<Signature> = public_data.pops.iter().map(|s| Signature::uncompress(s).unwrap()).collect();
 
 				// Verify the proofs of possession
-				for ((pk, pk_bytes), pop_bytes) in pks.clone().into_iter().zip(public_data.pks.iter()).zip(public_data.pops.iter()) {
-					// Decompress the proof
-					let pop = Signature::uncompress(pop_bytes).unwrap();
-
+				for (pk,  pop) in pks.clone().into_iter().zip(pops) {
 					// Verify the proof
 					// Note that the public key is validated here
 					let result = pop.verify(
 						true,
-						pk_bytes,
+						&[],
 						DST_POP,
 						&[],
 						&pk,
@@ -98,6 +98,69 @@ fn bench_pop(c: &mut Criterion) {
 					);
 					assert_eq!(result, BLST_ERROR::BLST_SUCCESS);
 				}
+			})
+		});
+	}
+}
+
+fn bench_pop_batch(c: &mut Criterion) {
+	let seed = [0u8; 32];
+	let mut rng = ChaCha12Rng::from_seed(seed);
+
+	let mut group = c.benchmark_group("PoP batch verify (minimal signature)");
+	for signers in SIGNERS {
+		group.bench_with_input(BenchmarkId::from_parameter(signers), signers, |b, &signers| {
+			// Generate signing data for a common message
+			let msg = gen_msg(&mut rng);
+			let secret_data: Vec<SigningData> = (0..signers).into_iter().map(
+				|_| gen_data(&msg, DST_SIGN, &mut rng)
+			).collect();
+
+			// Aggregate the signatures
+			let sigs = secret_data.iter().map(|d| &d.sig).collect::<Vec<&Signature>>();
+			let aggregate = AggregateSignature::aggregate(&sigs, true).unwrap().to_signature();
+
+			// Prepare the public data
+			let public_data = PublicData {
+				pks: secret_data.iter().map(|d| d.pk.compress().to_vec()).collect(),
+				pops: secret_data.iter().map(|d| d.pop.compress().to_vec()).collect(),
+				msg,
+				agg: aggregate.compress().to_vec(),
+			};
+
+			b.iter(|| {
+				// Decompress the public keys and proofs
+				let pks: Vec<PublicKey> = public_data.pks.iter().map(|p| PublicKey::uncompress(p).unwrap()).collect();
+				let pks_ref: Vec<&PublicKey> = pks.iter().collect();
+				let pops: Vec<Signature> = public_data.pops.iter().map(|s| Signature::uncompress(s).unwrap()).collect();
+				let pops_ref: Vec<&Signature> = pops.iter().collect();
+
+				// Set up the (empty) message slice
+				let msgs_ref: Vec<&[u8]> = vec![&[]; signers];
+
+				// Generate random weighting scalars (it's fine to use low-weight scalars here)
+				let mut weights = Vec::<blst_scalar>::with_capacity(signers);
+				for _ in 0..signers {
+					let weight_u32 = rng.next_u32();
+					let mut weight = MaybeUninit::<blst_scalar>::uninit();
+					unsafe {
+						blst_scalar_from_uint32(weight.as_mut_ptr(), &weight_u32);
+						weights.push(weight.assume_init());
+					}
+				}
+
+				// Verify the proofs of possession in a batch
+				let result = Signature::verify_multiple_aggregate_signatures(
+					&msgs_ref,
+					DST_POP,
+					&pks_ref,
+					true,
+					&pops_ref,
+					true,
+					&weights,
+					32,
+				);
+				assert_eq!(result, BLST_ERROR::BLST_SUCCESS);
 			})
 		});
 	}
@@ -143,5 +206,5 @@ fn bench_verify(c: &mut Criterion) {
 	}
 }
 
-criterion_group!(benches, bench_pop, bench_verify);
+criterion_group!(benches, bench_pop, bench_pop_batch, bench_verify);
 criterion_main!(benches);

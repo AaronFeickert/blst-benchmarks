@@ -10,7 +10,7 @@ use rand_chacha::ChaCha12Rng;
 
 const MSG_LEN: usize = 32; // length of common message in bytes
 const DST_SIGN: &[u8] = b"TEST_SIGN";
-const SIGNERS: &[usize] = &[1, 2, 4, 8, 16, 32, 64, 128, 256]; // number of signers for an aggregate signature
+const SIGNERS: &[usize] = &[1, 2, 32, 64]; // number of signers for an aggregate signature
 
 // Data used internally for signing
 struct SigningData {
