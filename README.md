@@ -1,6 +1,6 @@
 # BLST benchmarks
 
-Benchmarks showing different ways of using aggregated BLS signaturess using the [BLST](https://crates.io/crates/blst) library.
+Benchmarks showing different ways of using aggregated BLS signatures using the [BLST](https://crates.io/crates/blst) library.
 
 ## Rationale
 
